@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gigaflow"
+version = "0.1.0"
+description = "Локальный голосовой ввод для Windows на базе GigaAM-v3"
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "PySide6-Essentials>=6.9,<7",
+    "keyboard>=0.13.5,<0.14",
+    "numpy>=2.0,<3",
+    "onnx-asr[cpu,hub]>=0.12,<0.13",
+    "sounddevice>=0.5,<0.6",
+]
+
+[project.scripts]
+gigaflow = "gigaflow.app:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+gigaflow = ["assets/*.svg", "assets/*.ico"]
