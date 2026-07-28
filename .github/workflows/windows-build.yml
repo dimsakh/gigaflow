@@ -1,0 +1,68 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install . pyinstaller==6.14.2
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Build standalone application
+        run: python -m PyInstaller packaging/GigaFlow.spec --noconfirm --clean
+
+      - name: Smoke-test packaged files
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist\GigaFlow\GigaFlow.exe")) {
+            throw "GigaFlow.exe was not created"
+          }
+          if (Test-Path "dist\GigaFlow\models") {
+            throw "Speech model must not be bundled"
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "packaging\GigaFlow.iss"
+          if (-not (Test-Path "installer-output\GigaFlow-Setup.exe")) {
+            throw "GigaFlow-Setup.exe was not created"
+          }
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GigaFlow-Windows-Installer
+          path: installer-output/GigaFlow-Setup.exe
+          if-no-files-found: error
+
+      - name: Attach installer to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer-output/GigaFlow-Setup.exe
+          generate_release_notes: true
