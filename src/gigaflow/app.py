@@ -281,6 +281,15 @@ def configure_logging(log_dir: Path) -> None:
 
 
 def main() -> int:
+    if "--check-install" in sys.argv:
+        # CI/package smoke check: exercise packaged imports and writable user
+        # paths without opening the microphone or downloading the model.
+        import onnx_asr  # noqa: F401
+        import sounddevice  # noqa: F401
+
+        ensure_app_dirs()
+        return 0
+
     set_windows_app_id()
     QApplication.setQuitOnLastWindowClosed(False)
     app = QApplication(sys.argv)
