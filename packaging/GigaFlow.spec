@@ -14,7 +14,7 @@ for package in ("onnx_asr", "sounddevice"):
 datas += [("src/gigaflow/assets", "gigaflow/assets")]
 
 a = Analysis(
-    ["src/gigaflow/__main__.py"],
+    ["packaging/launcher.py"],
     pathex=["src"],
     binaries=binaries,
     datas=datas,
