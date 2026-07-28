@@ -14,3 +14,7 @@ history.sqlite3
 chrome-gigaflow/.runtime-test/
 .agents/
 .codex/
+installer-output/
+*.exe
+*.log
+models/
