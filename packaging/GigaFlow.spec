@@ -11,11 +11,11 @@ for package in ("onnx_asr", "sounddevice"):
     binaries += package_binaries
     hiddenimports += package_hiddenimports
 
-datas += [("src/gigaflow/assets", "gigaflow/assets")]
+datas += [("../src/gigaflow/assets", "gigaflow/assets")]
 
 a = Analysis(
-    ["packaging/launcher.py"],
-    pathex=["src"],
+    ["launcher.py"],
+    pathex=["../src"],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -38,7 +38,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
-    icon="src/gigaflow/assets/gigaflow.ico",
+    icon="../src/gigaflow/assets/gigaflow.ico",
 )
 
 coll = COLLECT(
