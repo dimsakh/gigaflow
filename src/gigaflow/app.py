@@ -27,6 +27,7 @@ class EventBridge(QObject):
     hotkey = Signal()
     level = Signal(float)
     transcription = Signal(str, bool)
+    model_status = Signal(str, str)
     error = Signal(str)
 
 
@@ -47,8 +48,8 @@ class GigaFlowController(QObject):
             self.config.model_name,
             self.paths["models"] / self.config.model_name,
             self.config.quantization,
+            self.bridge.model_status.emit,
         )
-        self.engine.preload()
         self.hotkey = GlobalHotkey(self.config.hotkey, self.bridge.hotkey.emit)
         self.started_at = 0.0
         self.processing = False
@@ -62,11 +63,13 @@ class GigaFlowController(QObject):
         self.bridge.hotkey.connect(self.toggle_recording)
         self.bridge.level.connect(self.overlay.set_level)
         self.bridge.transcription.connect(self._on_transcription)
+        self.bridge.model_status.connect(self._on_model_status)
         self.bridge.error.connect(self._on_error)
         self.window.toggle_requested.connect(self.toggle_recording)
         self.window.config_changed.connect(self._save_config)
         self.window.hotkey_capture_started.connect(self.hotkey.unregister)
         self.window.hotkey_changed.connect(self._apply_hotkey)
+        self.engine.preload()
 
         self.tray = QSystemTrayIcon(application_icon(), self)
         self.tray.setToolTip("GigaFlow")
@@ -214,6 +217,12 @@ class GigaFlowController(QObject):
             ),
             1800,
         )
+
+    @Slot(str, str)
+    def _on_model_status(self, title: str, detail: str) -> None:
+        self.window.set_status(title, detail)
+        if title.startswith("Не удалось"):
+            self.show_window()
 
     @Slot(str)
     def _on_error(self, message: str) -> None:
