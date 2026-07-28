@@ -27,10 +27,12 @@ class TranscriptionEngine:
         model_name: str,
         model_dir: Path,
         quantization: str | None = "int8",
+        status_callback: Callable[[str, str], None] | None = None,
     ):
         self.model_name = model_name
         self.model_dir = model_dir
         self.quantization = quantization
+        self._status_callback = status_callback
         self._model = None
         self._model_lock = threading.Lock()
         self._queue: queue.PriorityQueue[
@@ -47,6 +49,14 @@ class TranscriptionEngine:
         )
         self._thread.start()
 
+    def _report_status(self, title: str, detail: str) -> None:
+        if self._status_callback is not None:
+            self._status_callback(title, detail)
+
+    @property
+    def model_ready(self) -> bool:
+        return (self.model_dir / ".ready").is_file()
+
     def preload(self) -> None:
         threading.Thread(
             target=self._preload_safely,
@@ -57,8 +67,13 @@ class TranscriptionEngine:
     def _preload_safely(self) -> None:
         try:
             self._load_model()
-        except Exception:
-            # A normal transcription will report a useful error in the UI.
+        except Exception as exc:
+            self._report_status(
+                "Не удалось загрузить модель",
+                "Проверьте подключение к интернету и перезапустите GigaFlow.",
+            )
+            # A normal transcription will report the technical error if the
+            # user tries to start dictation before restarting.
             return
 
     def submit(
@@ -102,20 +117,40 @@ class TranscriptionEngine:
         with self._model_lock:
             if self._model is not None:
                 return self._model
-            # onnx-asr downloads a supported model only when its final
-            # directory does not exist yet.
+            # onnx-asr downloads the model from its supported official
+            # source when the target directory does not exist.
             self.model_dir.parent.mkdir(parents=True, exist_ok=True)
+            already_downloaded = self.model_ready
+            self._report_status(
+                "Проверяю модель" if already_downloaded else "Загружаю модель",
+                (
+                    "Подготавливаю локальную модель распознавания…"
+                    if already_downloaded
+                    else "Первый запуск: загрузка может занять несколько минут."
+                ),
+            )
             kwargs = {}
             if self.quantization:
                 kwargs["quantization"] = self.quantization
-            self._model = onnx_asr.load_model(
-                self.model_name,
-                str(self.model_dir),
-                **kwargs,
-            )
+            try:
+                self._model = onnx_asr.load_model(
+                    self.model_name,
+                    str(self.model_dir),
+                    **kwargs,
+                )
+            except Exception:
+                self._report_status(
+                    "Не удалось загрузить модель",
+                    "Проверьте интернет и повторно запустите GigaFlow.",
+                )
+                raise
             (self.model_dir / ".ready").write_text(
                 "GigaFlow model ready\n",
                 encoding="utf-8",
+            )
+            self._report_status(
+                "Модель готова",
+                "Распознавание выполняется локально; интернет больше не нужен.",
             )
         return self._model
 
