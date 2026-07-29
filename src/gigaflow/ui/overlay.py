@@ -4,12 +4,14 @@ import math
 import time
 from collections import deque
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QApplication, QWidget
 
 
 class ListeningOverlay(QWidget):
+    position_changed = Signal(int, int)
+
     def __init__(self):
         super().__init__()
         self.setWindowFlags(
@@ -28,6 +30,8 @@ class ListeningOverlay(QWidget):
         self._partial_seen = False
         self._started_at = time.monotonic()
         self._pulse = 0.0
+        self._saved_position: QPoint | None = None
+        self._drag_offset: QPoint | None = None
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(40)
@@ -80,7 +84,14 @@ class ListeningOverlay(QWidget):
         self._text = "Формирую черновой текст…"
         self.update()
 
+    def set_saved_position(self, x: int | None, y: int | None) -> None:
+        if x is not None and y is not None:
+            self._saved_position = QPoint(x, y)
+
     def _position(self) -> None:
+        if self._saved_position is not None:
+            self.move(self._saved_position)
+            return
         screen = QApplication.primaryScreen()
         if screen is None:
             return
@@ -89,6 +100,33 @@ class ListeningOverlay(QWidget):
             area.center().x() - self.width() // 2,
             area.bottom() - self.height() - 22,
         )
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            position = event.globalPosition().toPoint() - self._drag_offset
+            self.move(position)
+            self._saved_position = QPoint(position)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self._drag_offset is not None:
+            self._drag_offset = None
+            self.unsetCursor()
+            self._saved_position = self.pos()
+            self.position_changed.emit(self.x(), self.y())
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def _tick(self) -> None:
         self._pulse += 0.12

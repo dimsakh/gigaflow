@@ -23,6 +23,13 @@ class ConfigTests(unittest.TestCase):
             path.write_text(json.dumps({"hotkey": "f8", "future": True}))
             self.assertEqual(AppConfig.load(path).hotkey, "f8")
 
+    def test_overlay_position_round_trip(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "config.json"
+            AppConfig(overlay_x=476, overlay_y=212).save(path)
+            loaded = AppConfig.load(path)
+            self.assertEqual((loaded.overlay_x, loaded.overlay_y), (476, 212))
+
     def test_performance_settings_are_migrated(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "config.json"

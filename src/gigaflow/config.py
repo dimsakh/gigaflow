@@ -16,6 +16,8 @@ class AppConfig:
     show_partial_text: bool = True
     start_minimized: bool = False
     filler_filter: str = "soft"
+    overlay_x: int | None = None
+    overlay_y: int | None = None
     performance_version: int = 2
 
     @classmethod

@@ -71,6 +71,8 @@ class GigaFlowController(QObject):
         self.bridge.transcription.connect(self._on_transcription)
         self.bridge.model_status.connect(self._on_model_status)
         self.bridge.error.connect(self._on_error)
+        self.overlay.set_saved_position(self.config.overlay_x, self.config.overlay_y)
+        self.overlay.position_changed.connect(self._save_overlay_position)
         self.window.toggle_requested.connect(self.toggle_recording)
         self.window.config_changed.connect(self._save_config)
         self.window.hotkey_capture_started.connect(self.hotkey.unregister)
@@ -297,6 +299,12 @@ class GigaFlowController(QObject):
 
     @Slot()
     def _save_config(self) -> None:
+        self.config.save(self.config_path)
+
+    @Slot(int, int)
+    def _save_overlay_position(self, x: int, y: int) -> None:
+        self.config.overlay_x = x
+        self.config.overlay_y = y
         self.config.save(self.config_path)
 
     @Slot(str)
