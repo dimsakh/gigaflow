@@ -49,6 +49,33 @@ class ModelLifecycleTests(unittest.TestCase):
         self.assertIn("Модель готова", [title for title, _ in statuses])
         self.assertIn("Проверяю модель", [title for title, _ in second_statuses])
 
+    def test_incomplete_model_directory_is_removed_before_retry(self):
+        statuses = []
+
+        def load_model(name, path, **kwargs):
+            model_path = Path(path)
+            self.assertFalse((model_path / "partial.download").exists())
+            model_path.mkdir(parents=True, exist_ok=True)
+            return object()
+
+        fake_module = types.SimpleNamespace(load_model=load_model)
+        with tempfile.TemporaryDirectory() as folder:
+            model_dir = Path(folder) / "models" / "test-model"
+            model_dir.mkdir(parents=True)
+            (model_dir / "partial.download").write_text("broken")
+            with patch.dict(sys.modules, {"onnx_asr": fake_module}):
+                engine = TranscriptionEngine(
+                    "test-model",
+                    model_dir,
+                    "int8",
+                    lambda title, detail: statuses.append((title, detail)),
+                )
+                engine._load_model()
+                engine.close()
+
+        self.assertIn("Повторяю загрузку модели", [title for title, _ in statuses])
+        self.assertTrue((model_dir / ".ready").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()
