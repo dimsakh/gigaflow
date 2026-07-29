@@ -64,6 +64,31 @@ QHeaderView::section {
     padding: 8px;
     color: #9DA8C2;
 }
+QMenu {
+    background: #FFFFFF;
+    color: #182033;
+    border: 1px solid #C8CFDC;
+    border-radius: 8px;
+    padding: 5px;
+}
+QMenu::item {
+    background: transparent;
+    color: #182033;
+    border-radius: 5px;
+    padding: 7px 28px 7px 12px;
+}
+QMenu::item:selected {
+    background: #E7EAFE;
+    color: #182033;
+}
+QMenu::item:disabled {
+    color: #7A8499;
+}
+QMenu::separator {
+    height: 1px;
+    background: #DCE1EB;
+    margin: 5px 8px;
+}
 QScrollBar:vertical {
     background: transparent;
     width: 10px;
