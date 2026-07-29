@@ -29,6 +29,14 @@ RestartApplications=no
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[Messages]
+russian.FinishedHeadingLabel=GigaFlow успешно установлен
+russian.FinishedLabel=Все компоненты установлены. Приложение готово к запуску.%n%nПри первом запуске GigaFlow проверит модель распознавания речи и при необходимости автоматически загрузит её.
+russian.ClickFinish=Нажмите «Завершить», чтобы закрыть установщик.
+english.FinishedHeadingLabel=GigaFlow was installed successfully
+english.FinishedLabel=All components are installed. The application is ready to run.%n%nOn first launch GigaFlow will check the speech model and download it automatically if necessary.
+english.ClickFinish=Click Finish to close Setup.
+
 [Tasks]
 Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; GroupDescription: "Ярлыки:"; Flags: checkedonce
 
