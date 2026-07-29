@@ -141,9 +141,13 @@ class TranscriptionEngine:
             if self.quantization:
                 kwargs["quantization"] = self.quantization
             try:
+                # Do not pass model_dir here: in onnx-asr it means
+                # "load an already complete local model" and disables the
+                # supported Hugging Face download resolver. Without a path,
+                # onnx-asr downloads once into the current user's HF cache and
+                # reuses that cache on subsequent launches.
                 self._model = onnx_asr.load_model(
                     self.model_name,
-                    str(self.model_dir),
                     **kwargs,
                 )
             except Exception:
