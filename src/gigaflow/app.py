@@ -339,6 +339,8 @@ def main() -> int:
     if "--check-install" in sys.argv:
         # CI/package smoke check: exercise packaged imports and writable user
         # paths without opening the microphone or downloading the model.
+        if sys.stdout is None or sys.stderr is None:
+            raise RuntimeError("Windowed launcher did not initialize output streams")
         import onnx_asr  # noqa: F401
         import sounddevice  # noqa: F401
 
