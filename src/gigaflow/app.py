@@ -213,6 +213,12 @@ class GigaFlowController(QObject):
 
     @Slot(str, bool)
     def _on_transcription(self, text: str, final: bool) -> None:
+        # A final callback is the one irreversible action in a dictation
+        # session: it writes to the clipboard and may paste into another app.
+        # Ignore any duplicate/stale final callback after that session has
+        # completed so text can never be automatically pasted twice.
+        if final and not self.processing:
+            return
         if final:
             text = remove_filler_words(text, self.config.filler_filter)
         if not text:
