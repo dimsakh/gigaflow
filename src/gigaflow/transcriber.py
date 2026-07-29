@@ -156,6 +156,7 @@ class TranscriptionEngine:
                     "Проверьте интернет и повторно запустите GigaFlow.",
                 )
                 raise
+            self.model_dir.mkdir(parents=True, exist_ok=True)
             (self.model_dir / ".ready").write_text(
                 "GigaFlow model ready\n",
                 encoding="utf-8",
