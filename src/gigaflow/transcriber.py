@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import logging
 import queue
 import shutil
 import threading
+import time
 from itertools import count
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -66,16 +68,39 @@ class TranscriptionEngine:
         ).start()
 
     def _preload_safely(self) -> None:
-        try:
-            self._load_model()
-        except Exception as exc:
-            self._report_status(
-                "Не удалось загрузить модель",
-                "Проверьте подключение к интернету и перезапустите GigaFlow.",
-            )
-            # A normal transcription will report the technical error if the
-            # user tries to start dictation before restarting.
-            return
+        delays = (2, 5)
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                self._load_model()
+                return
+            except Exception as exc:
+                last_error = exc
+                logging.exception(
+                    "Model preload attempt %s of 3 failed",
+                    attempt + 1,
+                )
+                if attempt < len(delays):
+                    self._report_status(
+                        "Продолжаю загрузку модели",
+                        (
+                            f"Попытка {attempt + 2} из 3. "
+                            "Соединение прервалось, загрузка продолжится автоматически…"
+                        ),
+                    )
+                    time.sleep(delays[attempt])
+
+        assert last_error is not None
+        technical = f"{type(last_error).__name__}: {last_error}"
+        if len(technical) > 240:
+            technical = technical[:237] + "…"
+        self._report_status(
+            "Не удалось загрузить модель",
+            (
+                "Три попытки завершились ошибкой. Проверьте интернет и нажмите "
+                f"«Повторить загрузку».\n\nПодробности: {technical}"
+            ),
+        )
 
     def submit(
         self,
@@ -140,22 +165,15 @@ class TranscriptionEngine:
             kwargs = {}
             if self.quantization:
                 kwargs["quantization"] = self.quantization
-            try:
-                # Do not pass model_dir here: in onnx-asr it means
-                # "load an already complete local model" and disables the
-                # supported Hugging Face download resolver. Without a path,
-                # onnx-asr downloads once into the current user's HF cache and
-                # reuses that cache on subsequent launches.
-                self._model = onnx_asr.load_model(
-                    self.model_name,
-                    **kwargs,
-                )
-            except Exception:
-                self._report_status(
-                    "Не удалось загрузить модель",
-                    "Проверьте интернет и повторно запустите GigaFlow.",
-                )
-                raise
+            # Do not pass model_dir here: in onnx-asr it means
+            # "load an already complete local model" and disables the
+            # supported Hugging Face download resolver. Without a path,
+            # onnx-asr downloads once into the current user's HF cache and
+            # reuses that cache on subsequent launches.
+            self._model = onnx_asr.load_model(
+                self.model_name,
+                **kwargs,
+            )
             self.model_dir.mkdir(parents=True, exist_ok=True)
             (self.model_dir / ".ready").write_text(
                 "GigaFlow model ready\n",
