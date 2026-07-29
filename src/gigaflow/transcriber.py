@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import shutil
 import threading
@@ -152,6 +153,13 @@ class TranscriptionEngine:
                     "Удаляю файлы незавершённой загрузки…",
                 )
                 shutil.rmtree(self.model_dir)
+            # Hugging Face's Xet transport is often blocked by corporate
+            # networks, antivirus software and some providers on Windows.
+            # Force the regular resumable HTTPS downloader and apply finite
+            # request timeouts so the first-run screen cannot hang forever.
+            os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+            os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "15")
+            os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
             import onnx_asr
 
             self._report_status(
@@ -159,7 +167,7 @@ class TranscriptionEngine:
                 (
                     "Подготавливаю локальную модель распознавания…"
                     if already_downloaded
-                    else "Первый запуск: загрузка может занять несколько минут."
+                    else "Загружаю около 230 МБ. Обычно это занимает 3–15 минут."
                 ),
             )
             kwargs = {}
