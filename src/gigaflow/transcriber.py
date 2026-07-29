@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+import os
 import queue
+import shutil
 import threading
+import time
 from itertools import count
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -27,10 +31,12 @@ class TranscriptionEngine:
         model_name: str,
         model_dir: Path,
         quantization: str | None = "int8",
+        status_callback: Callable[[str, str], None] | None = None,
     ):
         self.model_name = model_name
         self.model_dir = model_dir
         self.quantization = quantization
+        self._status_callback = status_callback
         self._model = None
         self._model_lock = threading.Lock()
         self._queue: queue.PriorityQueue[
@@ -47,6 +53,14 @@ class TranscriptionEngine:
         )
         self._thread.start()
 
+    def _report_status(self, title: str, detail: str) -> None:
+        if self._status_callback is not None:
+            self._status_callback(title, detail)
+
+    @property
+    def model_ready(self) -> bool:
+        return (self.model_dir / ".ready").is_file()
+
     def preload(self) -> None:
         threading.Thread(
             target=self._preload_safely,
@@ -55,11 +69,39 @@ class TranscriptionEngine:
         ).start()
 
     def _preload_safely(self) -> None:
-        try:
-            self._load_model()
-        except Exception:
-            # A normal transcription will report a useful error in the UI.
-            return
+        delays = (2, 5)
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                self._load_model()
+                return
+            except Exception as exc:
+                last_error = exc
+                logging.exception(
+                    "Model preload attempt %s of 3 failed",
+                    attempt + 1,
+                )
+                if attempt < len(delays):
+                    self._report_status(
+                        "Продолжаю загрузку модели",
+                        (
+                            f"Попытка {attempt + 2} из 3. "
+                            "Соединение прервалось, загрузка продолжится автоматически…"
+                        ),
+                    )
+                    time.sleep(delays[attempt])
+
+        assert last_error is not None
+        technical = f"{type(last_error).__name__}: {last_error}"
+        if len(technical) > 240:
+            technical = technical[:237] + "…"
+        self._report_status(
+            "Не удалось загрузить модель",
+            (
+                "Три попытки завершились ошибкой. Проверьте интернет и нажмите "
+                f"«Повторить загрузку».\n\nПодробности: {technical}"
+            ),
+        )
 
     def submit(
         self,
@@ -97,25 +139,57 @@ class TranscriptionEngine:
     def _load_model(self):
         if self._model is not None:
             return self._model
-        import onnx_asr
-
         with self._model_lock:
             if self._model is not None:
                 return self._model
-            # onnx-asr downloads a supported model only when its final
-            # directory does not exist yet.
+            # onnx-asr treats any existing local directory as an offline,
+            # complete model. Remove a directory left by an interrupted first
+            # download so the library can download it again.
             self.model_dir.parent.mkdir(parents=True, exist_ok=True)
+            already_downloaded = self.model_ready
+            if self.model_dir.exists() and not already_downloaded:
+                self._report_status(
+                    "Повторяю загрузку модели",
+                    "Удаляю файлы незавершённой загрузки…",
+                )
+                shutil.rmtree(self.model_dir)
+            # Hugging Face's Xet transport is often blocked by corporate
+            # networks, antivirus software and some providers on Windows.
+            # Force the regular resumable HTTPS downloader and apply finite
+            # request timeouts so the first-run screen cannot hang forever.
+            os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+            os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "15")
+            os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
+            import onnx_asr
+
+            self._report_status(
+                "Проверяю модель" if already_downloaded else "Загружаю модель",
+                (
+                    "Подготавливаю локальную модель распознавания…"
+                    if already_downloaded
+                    else "Загружаю около 230 МБ. Обычно это занимает 3–15 минут."
+                ),
+            )
             kwargs = {}
             if self.quantization:
                 kwargs["quantization"] = self.quantization
+            # Do not pass model_dir here: in onnx-asr it means
+            # "load an already complete local model" and disables the
+            # supported Hugging Face download resolver. Without a path,
+            # onnx-asr downloads once into the current user's HF cache and
+            # reuses that cache on subsequent launches.
             self._model = onnx_asr.load_model(
                 self.model_name,
-                str(self.model_dir),
                 **kwargs,
             )
+            self.model_dir.mkdir(parents=True, exist_ok=True)
             (self.model_dir / ".ready").write_text(
                 "GigaFlow model ready\n",
                 encoding="utf-8",
+            )
+            self._report_status(
+                "Модель готова",
+                "Распознавание выполняется локально; интернет больше не нужен.",
             )
         return self._model
 

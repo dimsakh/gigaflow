@@ -4,7 +4,6 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
-*.spec
 *.egg-info/
 work/
 outputs/
@@ -15,3 +14,7 @@ history.sqlite3
 chrome-gigaflow/.runtime-test/
 .agents/
 .codex/
+installer-output/
+*.exe
+*.log
+models/
