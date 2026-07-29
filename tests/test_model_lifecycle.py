@@ -74,5 +74,40 @@ class ModelLifecycleTests(unittest.TestCase):
         self.assertIn("Повторяю загрузку модели", [title for title, _ in statuses])
 
 
+    def test_transient_download_failure_is_retried_automatically(self):
+        statuses = []
+        attempts = 0
+
+        def load_model(name, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise ConnectionError("temporary network failure")
+            return object()
+
+        fake_module = types.SimpleNamespace(load_model=load_model)
+        with tempfile.TemporaryDirectory() as folder:
+            model_dir = Path(folder) / "models" / "test-model"
+            with (
+                patch.dict(sys.modules, {"onnx_asr": fake_module}),
+                patch("gigaflow.transcriber.time.sleep"),
+            ):
+                engine = TranscriptionEngine(
+                    "test-model",
+                    model_dir,
+                    "int8",
+                    lambda title, detail: statuses.append((title, detail)),
+                )
+                engine._preload_safely()
+                engine.close()
+
+        self.assertEqual(attempts, 3)
+        self.assertTrue((model_dir / ".ready").is_file())
+        titles = [title for title, _ in statuses]
+        self.assertEqual(titles.count("Продолжаю загрузку модели"), 2)
+        self.assertIn("Модель готова", titles)
+        self.assertNotIn("Не удалось загрузить модель", titles)
+
+
 if __name__ == "__main__":
     unittest.main()
