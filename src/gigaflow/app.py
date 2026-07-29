@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from .audio import AudioRecorder, SAMPLE_RATE
 from .clipboard import copy_text, foreground_external_window, paste_from_clipboard
@@ -19,6 +19,7 @@ from .storage import HistoryStore
 from .text import remove_filler_words
 from .transcriber import TranscriptionEngine
 from .ui.main_window import MainWindow
+from .ui.model_setup import ModelSetupDialog
 from .ui.overlay import ListeningOverlay
 from .ui.theme import APP_STYLE
 
@@ -43,6 +44,7 @@ class GigaFlowController(QObject):
         self.bridge = EventBridge()
         self.overlay = ListeningOverlay()
         self.window = MainWindow(self.config, self.store)
+        self.setup_dialog = ModelSetupDialog()
         self.recorder = AudioRecorder(self.bridge.level.emit)
         self.engine = TranscriptionEngine(
             self.config.model_name,
@@ -53,6 +55,9 @@ class GigaFlowController(QObject):
         self.hotkey = GlobalHotkey(self.config.hotkey, self.bridge.hotkey.emit)
         self.started_at = 0.0
         self.processing = False
+        self.model_ready = False
+        self.runtime_started = False
+        self.shutting_down = False
         self.partial_timer = QTimer(self)
         self.partial_timer.setInterval(self.config.partial_interval_ms)
         self.partial_timer.timeout.connect(self._request_partial)
@@ -69,7 +74,9 @@ class GigaFlowController(QObject):
         self.window.config_changed.connect(self._save_config)
         self.window.hotkey_capture_started.connect(self.hotkey.unregister)
         self.window.hotkey_changed.connect(self._apply_hotkey)
-        self.engine.preload()
+        self.setup_dialog.start_requested.connect(self._finish_startup)
+        self.setup_dialog.retry_requested.connect(self._retry_model_download)
+        self.setup_dialog.cancelled.connect(self.shutdown)
 
         self.tray = QSystemTrayIcon(application_icon(), self)
         self.tray.setToolTip("GigaFlow")
@@ -88,22 +95,55 @@ class GigaFlowController(QObject):
         self.tray.activated.connect(self._tray_activated)
 
     def start(self) -> None:
+        self.setup_dialog.set_downloading(
+            "Проверяем модель распознавания",
+            "Пожалуйста, подождите. При первом запуске модель будет загружена автоматически.",
+        )
+        self.setup_dialog.show()
+        self.setup_dialog.raise_()
+        self.setup_dialog.activateWindow()
+        self.engine.preload()
+
+    @Slot()
+    def _finish_startup(self) -> None:
+        if not self.model_ready or self.runtime_started:
+            return
+        self.runtime_started = True
+        self.setup_dialog.finish_and_hide()
         try:
             self.hotkey.register()
         except Exception as exc:
             self.window.set_status("Горячая клавиша недоступна", str(exc))
         self.tray.show()
-        if not self.config.start_minimized:
-            self.show_window()
+        self.show_window()
+
+    @Slot()
+    def _retry_model_download(self) -> None:
+        if self.model_ready:
+            self.setup_dialog.set_ready()
+            return
+        self.setup_dialog.set_downloading(
+            "Повторная загрузка модели",
+            "Пожалуйста, подождите. GigaFlow автоматически продолжит подготовку.",
+        )
+        self.engine.preload()
 
     @Slot()
     def show_window(self) -> None:
+        if not self.runtime_started:
+            self.setup_dialog.show()
+            self.setup_dialog.raise_()
+            self.setup_dialog.activateWindow()
+            return
         self.window.show()
         self.window.raise_()
         self.window.activateWindow()
 
     @Slot()
     def toggle_recording(self) -> None:
+        if not self.runtime_started or not self.model_ready:
+            self.show_window()
+            return
         if self.recorder.recording:
             self._stop_recording()
         else:
@@ -221,8 +261,20 @@ class GigaFlowController(QObject):
     @Slot(str, str)
     def _on_model_status(self, title: str, detail: str) -> None:
         self.window.set_status(title, detail)
-        if title.startswith("Не удалось"):
+        if title == "Модель готова":
+            self.model_ready = True
+            self.setup_dialog.set_ready(
+                "Модель распознавания загружена и проверена. Можно начинать работу."
+            )
+        elif title.startswith("Не удалось"):
+            self.model_ready = False
+            self.setup_dialog.set_error(
+                detail
+                or "Проверьте подключение к интернету и нажмите «Повторить загрузку»."
+            )
             self.show_window()
+        else:
+            self.setup_dialog.set_downloading(title, detail)
 
     @Slot(str)
     def _on_error(self, message: str) -> None:
@@ -260,6 +312,9 @@ class GigaFlowController(QObject):
 
     @Slot()
     def shutdown(self) -> None:
+        if self.shutting_down:
+            return
+        self.shutting_down = True
         self.partial_timer.stop()
         self.silence_timer.stop()
         if self.recorder.recording:
