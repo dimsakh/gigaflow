@@ -101,12 +101,12 @@ class ModelLifecycleTests(unittest.TestCase):
                 engine._preload_safely()
                 engine.close()
 
-        self.assertEqual(attempts, 3)
-        self.assertTrue((model_dir / ".ready").is_file())
-        titles = [title for title, _ in statuses]
-        self.assertEqual(titles.count("Продолжаю загрузку модели"), 2)
-        self.assertIn("Модель готова", titles)
-        self.assertNotIn("Не удалось загрузить модель", titles)
+                self.assertEqual(attempts, 3)
+                self.assertTrue((model_dir / ".ready").is_file())
+                titles = [title for title, _ in statuses]
+                self.assertEqual(titles.count("Продолжаю загрузку модели"), 2)
+                self.assertIn("Модель готова", titles)
+                self.assertNotIn("Не удалось загрузить модель", titles)
 
 
 if __name__ == "__main__":
