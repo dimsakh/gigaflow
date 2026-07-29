@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import shutil
 import threading
 from itertools import count
 from collections.abc import Callable
@@ -112,15 +113,22 @@ class TranscriptionEngine:
     def _load_model(self):
         if self._model is not None:
             return self._model
-        import onnx_asr
-
         with self._model_lock:
             if self._model is not None:
                 return self._model
-            # onnx-asr downloads the model from its supported official
-            # source when the target directory does not exist.
+            # onnx-asr treats any existing local directory as an offline,
+            # complete model. Remove a directory left by an interrupted first
+            # download so the library can download it again.
             self.model_dir.parent.mkdir(parents=True, exist_ok=True)
             already_downloaded = self.model_ready
+            if self.model_dir.exists() and not already_downloaded:
+                self._report_status(
+                    "Повторяю загрузку модели",
+                    "Удаляю файлы незавершённой загрузки…",
+                )
+                shutil.rmtree(self.model_dir)
+            import onnx_asr
+
             self._report_status(
                 "Проверяю модель" if already_downloaded else "Загружаю модель",
                 (
