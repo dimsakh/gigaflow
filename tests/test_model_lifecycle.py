@@ -69,9 +69,9 @@ class ModelLifecycleTests(unittest.TestCase):
                 )
                 engine._load_model()
                 engine.close()
+                self.assertTrue((model_dir / ".ready").is_file())
 
         self.assertIn("Повторяю загрузку модели", [title for title, _ in statuses])
-        self.assertTrue((model_dir / ".ready").is_file())
 
 
 if __name__ == "__main__":
