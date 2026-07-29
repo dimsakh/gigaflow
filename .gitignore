@@ -17,4 +17,5 @@ chrome-gigaflow/.runtime-test/
 installer-output/
 *.exe
 *.log
+/GigaFlow.spec
 models/

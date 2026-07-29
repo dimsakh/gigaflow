@@ -15,6 +15,7 @@ from .config import AppConfig
 from .hotkeys import GlobalHotkey
 from .icons import application_icon, set_windows_app_id
 from .paths import ensure_app_dirs
+from .single_instance import SingleInstanceGuard
 from .storage import HistoryStore
 from .text import remove_filler_words
 from .transcriber import TranscriptionEngine
@@ -353,16 +354,22 @@ def main() -> int:
         ensure_app_dirs()
         return 0
 
-    set_windows_app_id()
-    QApplication.setQuitOnLastWindowClosed(False)
-    app = QApplication(sys.argv)
-    app.setApplicationName("GigaFlow")
-    app.setOrganizationName("GigaFlow")
-    app.setStyleSheet(APP_STYLE)
-    app.setWindowIcon(application_icon())
-    paths = ensure_app_dirs()
-    configure_logging(paths["logs"])
-    controller = GigaFlowController(app)
-    app.aboutToQuit.connect(controller.hotkey.unregister)
-    controller.start()
-    return app.exec()
+    instance = SingleInstanceGuard()
+    if not instance.acquire():
+        return 0
+    try:
+        set_windows_app_id()
+        QApplication.setQuitOnLastWindowClosed(False)
+        app = QApplication(sys.argv)
+        app.setApplicationName("GigaFlow")
+        app.setOrganizationName("GigaFlow")
+        app.setStyleSheet(APP_STYLE)
+        app.setWindowIcon(application_icon())
+        paths = ensure_app_dirs()
+        configure_logging(paths["logs"])
+        controller = GigaFlowController(app)
+        app.aboutToQuit.connect(controller.hotkey.unregister)
+        controller.start()
+        return app.exec()
+    finally:
+        instance.release()
