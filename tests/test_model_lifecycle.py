@@ -13,9 +13,8 @@ class ModelLifecycleTests(unittest.TestCase):
         statuses = []
         calls = []
 
-        def load_model(name, path, **kwargs):
-            calls.append((name, Path(path), kwargs))
-            Path(path).mkdir(parents=True, exist_ok=True)
+        def load_model(name, **kwargs):
+            calls.append((name, kwargs))
             return object()
 
         fake_module = types.SimpleNamespace(load_model=load_model)
@@ -43,8 +42,8 @@ class ModelLifecycleTests(unittest.TestCase):
                 second._load_model()
                 second.close()
 
-        self.assertEqual(calls[0][1], model_dir)
-        self.assertEqual(calls[0][2], {"quantization": "int8"})
+        self.assertEqual(calls[0][0], "test-model")
+        self.assertEqual(calls[0][1], {"quantization": "int8"})
         self.assertIn("Загружаю модель", [title for title, _ in statuses])
         self.assertIn("Модель готова", [title for title, _ in statuses])
         self.assertIn("Проверяю модель", [title for title, _ in second_statuses])
@@ -52,10 +51,8 @@ class ModelLifecycleTests(unittest.TestCase):
     def test_incomplete_model_directory_is_removed_before_retry(self):
         statuses = []
 
-        def load_model(name, path, **kwargs):
-            model_path = Path(path)
-            self.assertFalse((model_path / "partial.download").exists())
-            model_path.mkdir(parents=True, exist_ok=True)
+        def load_model(name, **kwargs):
+            self.assertFalse((model_dir / "partial.download").exists())
             return object()
 
         fake_module = types.SimpleNamespace(load_model=load_model)
