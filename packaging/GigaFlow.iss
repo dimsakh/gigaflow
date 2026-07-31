@@ -1,5 +1,5 @@
 #define MyAppName "GigaFlow"
-#define MyAppVersion "0.1.6"
+#define MyAppVersion "0.1.7"
 #define MyAppPublisher "GigaFlow"
 #define MyAppExeName "GigaFlow.exe"
 

@@ -20,6 +20,18 @@ class TextTests(unittest.TestCase):
             "Один два три четыре пять шесть",
         )
 
+    def test_merge_removes_long_chunk_overlap(self):
+        repeated = " ".join(f"слово{index}" for index in range(1, 33))
+        self.assertEqual(
+            merge_transcripts(
+                [
+                    f"Начало диктовки {repeated}",
+                    f"{repeated} завершение диктовки",
+                ]
+            ),
+            f"Начало диктовки {repeated} завершение диктовки",
+        )
+
     def test_split_audio_with_overlap(self):
         audio = np.zeros(45 * 16_000, dtype=np.float32)
         chunks = split_audio(audio)
