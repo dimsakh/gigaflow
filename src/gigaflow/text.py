@@ -101,7 +101,13 @@ def _capitalize_sentences(text: str) -> str:
     )
 
 
-def merge_transcripts(parts: list[str], max_overlap_words: int = 12) -> str:
+def merge_transcripts(parts: list[str], max_overlap_words: int = 64) -> str:
+    """Join adjacent audio chunks while removing their exact shared passage.
+
+    A one-second audio overlap can cause the recognizer to repeat more than a
+    short phrase. Comparing up to 64 normalized words removes that duplicated
+    boundary without deleting intentional repetition inside a single chunk.
+    """
     merged: list[str] = []
     for part in parts:
         words = clean_transcript(part).split()
