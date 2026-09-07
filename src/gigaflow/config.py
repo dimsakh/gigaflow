@@ -13,6 +13,7 @@ class AppConfig:
     quantization: str | None = "int8"
     partial_interval_ms: int = 900
     auto_finish_silence_seconds: float = 2.2
+    stream_chunk_seconds: float = 4.0
     show_partial_text: bool = True
     start_minimized: bool = False
     filler_filter: str = "soft"

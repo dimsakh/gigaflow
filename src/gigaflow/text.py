@@ -128,6 +128,19 @@ def merge_transcripts(parts: list[str], max_overlap_words: int = 64) -> str:
     return clean_transcript(" ".join(merged))
 
 
+def common_prefix_length(a: str, b: str) -> int:
+    """Length of the shared leading text between two strings.
+
+    Used to type only the delta between what is already on screen and a
+    revised transcript, instead of retyping everything on every update.
+    """
+    limit = min(len(a), len(b))
+    for index in range(limit):
+        if a[index] != b[index]:
+            return index
+    return limit
+
+
 def split_audio(
     audio,
     sample_rate: int = 16_000,

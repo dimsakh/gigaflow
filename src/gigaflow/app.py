@@ -2,22 +2,30 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 import time
 from pathlib import Path
 
+import numpy as np
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from .audio import AudioRecorder, SAMPLE_RATE
-from .clipboard import copy_text, foreground_external_window, paste_from_clipboard
+from .clipboard import (
+    copy_text,
+    foreground_external_window,
+    paste_from_clipboard,
+    send_backspaces,
+    type_text,
+)
 from .config import AppConfig
 from .hotkeys import GlobalHotkey
 from .icons import application_icon, set_windows_app_id
 from .paths import ensure_app_dirs
 from .single_instance import SingleInstanceGuard
 from .storage import HistoryStore
-from .text import remove_filler_words
+from .text import common_prefix_length, merge_transcripts, remove_filler_words
 from .transcriber import TranscriptionEngine
 from .ui.main_window import MainWindow
 from .ui.model_setup import ModelSetupDialog
@@ -29,6 +37,9 @@ class EventBridge(QObject):
     hotkey = Signal()
     level = Signal(float)
     transcription = Signal(str, bool)
+    chunk_ready = Signal(str)
+    recording_started = Signal()
+    recording_stopped = Signal(object)
     model_status = Signal(str, str)
     error = Signal(str)
 
@@ -59,6 +70,13 @@ class GigaFlowController(QObject):
         self.model_ready = False
         self.runtime_started = False
         self.shutting_down = False
+        self._opening_microphone = False
+        self._stopping_recording = False
+        self._committed_samples = 0
+        self._chunk_texts: list[str] = []
+        self._typed_text = ""
+        self._stream_broken = False
+        self._target_window: int | None = None
         self.partial_timer = QTimer(self)
         self.partial_timer.setInterval(self.config.partial_interval_ms)
         self.partial_timer.timeout.connect(self._request_partial)
@@ -69,6 +87,9 @@ class GigaFlowController(QObject):
         self.bridge.hotkey.connect(self.toggle_recording)
         self.bridge.level.connect(self.overlay.set_level)
         self.bridge.transcription.connect(self._on_transcription)
+        self.bridge.chunk_ready.connect(self._on_chunk_ready)
+        self.bridge.recording_started.connect(self._on_recording_started)
+        self.bridge.recording_stopped.connect(self._on_recording_stopped)
         self.bridge.model_status.connect(self._on_model_status)
         self.bridge.error.connect(self._on_error)
         self.overlay.set_saved_position(self.config.overlay_x, self.config.overlay_y)
@@ -159,11 +180,40 @@ class GigaFlowController(QObject):
                 "Подождите несколько секунд",
             )
             return
-        try:
-            self.recorder.start(self.config.microphone)
-        except Exception as exc:
-            self._on_error(f"Не удалось открыть микрофон: {exc}")
+        if self._opening_microphone:
             return
+        self._opening_microphone = True
+        self.window.set_status("Открываю микрофон", "Секунду…")
+        threading.Thread(
+            target=self._open_microphone,
+            args=(self.config.microphone,),
+            name="GigaFlow-MicOpen",
+            daemon=True,
+        ).start()
+
+    def _open_microphone(self, device: int | None) -> None:
+        # sounddevice/PortAudio can block for a while opening a device (a
+        # slow USB/Bluetooth mic, or one held by another app under WASAPI
+        # exclusive mode). Doing this off the Qt thread keeps the window,
+        # tray and global hotkey responsive instead of freezing GigaFlow.
+        try:
+            self.recorder.start(device)
+        except Exception as exc:
+            self._opening_microphone = False
+            self.bridge.error.emit(f"Не удалось открыть микрофон: {exc}")
+            return
+        self.bridge.recording_started.emit()
+
+    @Slot()
+    def _on_recording_started(self) -> None:
+        self._opening_microphone = False
+        self._committed_samples = 0
+        self._chunk_texts = []
+        self._typed_text = ""
+        self._stream_broken = False
+        # Captured once, before "recognizing" work runs, so a later window
+        # switch during that gap can't cause text to land in the wrong app.
+        self._target_window = foreground_external_window()
         self.started_at = time.monotonic()
         self.window.set_recording(True)
         self.window.set_status(
@@ -175,36 +225,106 @@ class GigaFlowController(QObject):
         self.silence_timer.start()
 
     def _stop_recording(self) -> None:
+        if self._stopping_recording or not self.recorder.recording:
+            return
+        self._stopping_recording = True
         self.partial_timer.stop()
         self.silence_timer.stop()
-        audio = self.recorder.stop()
-        self.window.set_recording(False)
-        if audio.size < SAMPLE_RATE // 2:
-            self.overlay.show_error("Слишком короткая запись")
-            self.window.set_status("Запись слишком короткая", "Попробуйте ещё раз")
-            return
         self.overlay.show_processing()
         self.processing = True
         self.window.set_status("Распознаю", "Готовый текст будет скопирован автоматически")
-        self.engine.submit(
-            audio,
-            final=True,
-            callback=self.bridge.transcription.emit,
-            error_callback=self.bridge.error.emit,
-        )
+        # Closing the stream can block briefly too; keep it off the Qt thread
+        # for the same reason as opening it.
+        threading.Thread(
+            target=self._close_and_submit,
+            name="GigaFlow-MicClose",
+            daemon=True,
+        ).start()
+
+    def _close_and_submit(self) -> None:
+        audio = self.recorder.stop()
+        self.bridge.recording_stopped.emit(audio)
+
+    @Slot(object)
+    def _on_recording_stopped(self, audio: np.ndarray) -> None:
+        self._stopping_recording = False
+        self.window.set_recording(False)
+        if audio.size < SAMPLE_RATE // 2 and not self._chunk_texts:
+            self.processing = False
+            self.overlay.show_error("Слишком короткая запись")
+            self.window.set_status("Запись слишком короткая", "Попробуйте ещё раз")
+            return
+        remainder = audio[self._committed_samples :]
+        if remainder.size >= SAMPLE_RATE // 2:
+            self.engine.submit(
+                remainder,
+                final=True,
+                callback=self.bridge.transcription.emit,
+                error_callback=self.bridge.error.emit,
+            )
+        else:
+            self.bridge.transcription.emit("", True)
 
     def _request_partial(self) -> None:
-        if not self.config.show_partial_text or not self.recorder.recording:
+        if not self.recorder.recording:
             return
         audio = self.recorder.snapshot()
+        self._maybe_commit_chunk(audio)
+        if not self.config.show_partial_text:
+            return
+        tail = audio[self._committed_samples :]
+        if tail.size < SAMPLE_RATE // 2:
+            return
         accepted = self.engine.submit(
-            audio,
+            tail,
             final=False,
             callback=self.bridge.transcription.emit,
             error_callback=self.bridge.error.emit,
         )
         if accepted:
             self.overlay.show_recognizing()
+
+    def _maybe_commit_chunk(self, audio: np.ndarray) -> None:
+        # Recognize and insert audio in fixed-size chunks as soon as they are
+        # long enough, instead of waiting for the whole dictation to finish
+        # before anything is typed. Each chunk is recognized once and never
+        # revisited, so growing the transcript can only append text.
+        chunk_samples = int(self.config.stream_chunk_seconds * SAMPLE_RATE)
+        if audio.size - self._committed_samples < chunk_samples:
+            return
+        start = self._committed_samples
+        end = start + chunk_samples
+        self._committed_samples = end
+        self.engine.submit(
+            audio[start:end],
+            final=True,
+            callback=lambda text, final: self.bridge.chunk_ready.emit(text),
+            error_callback=self.bridge.error.emit,
+        )
+
+    @Slot(str)
+    def _on_chunk_ready(self, text: str) -> None:
+        if not self.recorder.recording and not self.processing:
+            return
+        cleaned = remove_filler_words(text, self.config.filler_filter) if text else ""
+        if not cleaned:
+            return
+        self._chunk_texts.append(cleaned)
+        self._apply_stream_text(merge_transcripts(self._chunk_texts))
+
+    def _apply_stream_text(self, full_text: str) -> None:
+        if self._stream_broken or not self._target_window or full_text == self._typed_text:
+            return
+        old = self._typed_text
+        prefix = common_prefix_length(old, full_text)
+        if prefix < len(old) and not send_backspaces(self._target_window, len(old) - prefix):
+            self._stream_broken = True
+            return
+        suffix = full_text[prefix:]
+        if suffix and not type_text(self._target_window, suffix):
+            self._stream_broken = True
+            return
+        self._typed_text = full_text
 
     def _check_auto_finish(self) -> None:
         if not self.recorder.recording or not self.recorder.heard_voice:
@@ -222,28 +342,37 @@ class GigaFlowController(QObject):
         # completed so text can never be automatically pasted twice.
         if final and not self.processing:
             return
-        if final:
-            text = remove_filler_words(text, self.config.filler_filter)
-        if not text:
-            if final:
-                self._on_error("Речь не распознана")
-            return
         if not final:
-            if self.recorder.recording:
-                self.overlay.set_partial(text)
+            if text and self.recorder.recording:
+                preview = merge_transcripts([*self._chunk_texts, text])
+                self.overlay.set_partial(preview)
+            return
+        remainder = remove_filler_words(text, self.config.filler_filter) if text else ""
+        if remainder:
+            self._chunk_texts.append(remainder)
+        full_text = merge_transcripts(self._chunk_texts)
+        self._apply_stream_text(full_text)
+        if not full_text:
+            self.processing = False
+            self._on_error("Речь не распознана")
             return
         duration = max(0.0, time.monotonic() - self.started_at)
         self.processing = False
-        copied = copy_text(text)
-        pasted = copied and paste_from_clipboard(foreground_external_window())
-        self.store.add(text, duration)
+        copied = copy_text(full_text)
+        typed_live = (
+            bool(self._target_window)
+            and not self._stream_broken
+            and self._typed_text == full_text
+        )
+        pasted = typed_live or (copied and paste_from_clipboard(self._target_window))
+        self.store.add(full_text, duration)
         self.window.refresh_history()
         if pasted:
             self.window.set_status("Вставлено", "Текст автоматически вставлен в активное окно")
-            self.overlay.show_result("Вставлено • " + text, "Вставлено")
+            self.overlay.show_result("Вставлено • " + full_text, "Вставлено")
         elif copied:
             self.window.set_status("Скопировано", "Поставьте курсор и нажмите Ctrl+V")
-            self.overlay.show_result("Ctrl+V — вставить • " + text)
+            self.overlay.show_result("Ctrl+V — вставить • " + full_text)
         else:
             self.window.set_status(
                 "Текст сохранён в истории",

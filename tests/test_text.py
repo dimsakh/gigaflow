@@ -4,6 +4,7 @@ import numpy as np
 
 from gigaflow.text import (
     clean_transcript,
+    common_prefix_length,
     merge_transcripts,
     remove_filler_words,
     split_audio,
@@ -58,6 +59,13 @@ class TextTests(unittest.TestCase):
             remove_filler_words("Это значит, что нужен объект типа B.", "full"),
             "Это значит, что нужен объект типа B.",
         )
+
+
+    def test_common_prefix_length(self):
+        self.assertEqual(common_prefix_length("привет мир", "привет мир!"), len("привет мир"))
+        self.assertEqual(common_prefix_length("привет мир", "привет всем"), len("привет "))
+        self.assertEqual(common_prefix_length("", "текст"), 0)
+        self.assertEqual(common_prefix_length("текст", "текст"), len("текст"))
 
 
 if __name__ == "__main__":
